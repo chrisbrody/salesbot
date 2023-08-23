@@ -1,0 +1,6 @@
+.env
+/node_modules
+tiktoken
+.venv
+app.py
+requirements.txt
