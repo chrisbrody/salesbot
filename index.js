@@ -48,6 +48,10 @@ async function sendToChatGPT (transcribedText) {
     const response = await axios.post(endpoint, data, { headers });
     const chatGptResponse = response.data.choices[0].message.content;
     console.log('ChatGPT Response:', chatGptResponse);
+
+    // convert response to audio 
+
+    // feed response to twilio
   } catch (error) {
     console.error('Error in sendToChatGPT:', error);
   }
