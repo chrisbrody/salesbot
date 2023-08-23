@@ -6,6 +6,7 @@ const path = require("path")
 const app = express();
 const server = require("http").createServer(app);
 const wss = new WebSocket.Server({ server });
+const axios = require('axios')
 
 let assembly;
 let chunks = [];
@@ -19,7 +20,37 @@ const ASSEMBLY_APIKEY = process.env.ASSEMBLY_APIKEY
 async function sendToChatGPT (transcribedText) {
   console.log(`data to send to gpt: ${transcribedText}`);
 
+  const MODEL = 'gpt-3.5-turbo'
+  const MAXTOKENS = 4000
+  const TEMPERATURE = 0.5 // 0:make nothing up | 2:make anything up
 
+  try {
+    const endpoint = 'https://api.openai.com/v1/chat/completions';
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_APIKEY}`
+    };
+
+    let prompt = transcribedText
+
+    // Set up the request data
+    const data = {
+      model: MODEL,
+      max_tokens: MAXTOKENS,
+      temperature: TEMPERATURE,
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: prompt }
+      ]
+    };
+
+    // Send the API request using axios
+    const response = await axios.post(endpoint, data, { headers });
+    const chatGptResponse = response.data.choices[0].message.content;
+    console.log('ChatGPT Response:', chatGptResponse);
+  } catch (error) {
+    console.error('Error in sendToChatGPT:', error);
+  }
 }
 
 // Handle Web Socket Connection
