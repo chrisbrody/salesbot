@@ -182,9 +182,9 @@ app.post("/", async (req, res) => {
   // Respond with TwiML instructions
   res.send(
     `<Response>
-       <Start>
+       <Connect>
          <Stream url='wss://${req.headers.host}' />
-       </Start>
+       </Connect>
        <Say>
          Start speaking to see your audio transcribed in the console
        </Say>
