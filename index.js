@@ -17,6 +17,7 @@ require('dotenv').config(); // Load environment variables from .env file
 const ASSEMBLY_APIKEY = process.env.ASSEMBLY_APIKEY
 
 
+// send question to Large language model
 async function sendToChatGPT (transcribedText) {
   console.log(`data to send to gpt: ${transcribedText}`);
 
