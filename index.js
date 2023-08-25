@@ -16,6 +16,13 @@ require('dotenv').config(); // Load environment variables from .env file
 
 const ASSEMBLY_APIKEY = process.env.ASSEMBLY_APIKEY
 
+// add twilio
+const twilio = require('twilio');
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+const fs = require('fs')
 
 // send question to Large language model
 async function sendToChatGPT (transcribedText) {
@@ -50,11 +57,54 @@ async function sendToChatGPT (transcribedText) {
     const chatGptResponse = response.data.choices[0].message.content;
     console.log('ChatGPT Response:', chatGptResponse);
 
-    // convert response to audio 
-
     // feed response to twilio
+    sendToElevenLabs(chatGptResponse)
   } catch (error) {
     console.error('Error in sendToChatGPT:', error);
+  }
+}
+
+// Function to send the ChatGPT response to ElevenLabs
+async function sendToElevenLabs(responseFromChatGPT) {
+  try {
+    const XI_API_KEY = process.env.ELEVENLABS_APIKEY;
+    const TTS_OUTPUT_PATH = "./output.wav";
+
+    const ttsUrl = "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM/stream"; // Make sure to set `voice-id`
+
+    const ttsHeaders = {
+      "Accept": "audio/mpeg",
+      "Content-Type": "application/json",
+      "xi-api-key": XI_API_KEY
+    };
+
+    const ttsData = {
+      "text": responseFromChatGPT,
+      "model_id": "eleven_monolingual_v1",
+      "voice_settings": {
+        "stability": 0.5,
+        "similarity_boost": 0.5
+      }
+    };
+
+    const ttsResponse = await axios.post(ttsUrl, ttsData, {
+      headers: ttsHeaders,
+      responseType: 'stream'
+    });
+
+    console.log(ttsResponse);
+
+    // pass along stream to twilio
+
+    const outputStream = fs.createWriteStream(TTS_OUTPUT_PATH);
+    ttsResponse.data.pipe(outputStream);
+
+    outputStream.on('finish', () => {
+      console.log('ElevenLabs TTS output written successfully.');
+    });
+
+  } catch (error) {
+    console.error('Error in sendToElevenLabs:', error.message);
   }
 }
 
@@ -68,7 +118,7 @@ wss.on("connection", function connection(ws) {
 
     // Parse the incoming message as JSON
     const msg = JSON.parse(message);
-    // console.log(msg);
+    // console.log(msg.media.payload);
     const text = msg.text;
     
     if (msg.message_type === "PartialTranscript") {
@@ -138,12 +188,26 @@ wss.on("connection", function connection(ws) {
 
         // Send audio data to AssemblyAI, chunking for minimum duration
         chunks.push(twilioAudioBuffer.slice(44));
+
+        // Create an audio buffer for streaming back to the caller
+        const audioBuffer = Buffer.concat(chunks);
+
+        // Broadcast the audio buffer to all connected clients
+        wss.clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(audioBuffer);
+          }
+        });
+
         if (chunks.length >= 5) {
           const audioBuffer = Buffer.concat(chunks);
           const encodedAudio = audioBuffer.toString("base64");
           assembly.send(JSON.stringify({ audio_data: encodedAudio }));
           chunks = [];
         }
+
+        // some how we need to find when a person stops talking and then call sendToChatGPT function 
+
         break;
       case "stop":
         console.log(`Call Has Ended`);
@@ -160,7 +224,6 @@ wss.on("connection", function connection(ws) {
     }        
   });
 });
-
 
 // Handle GET requests - this will likely be the login
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "/index.html")));

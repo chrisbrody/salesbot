@@ -4,3 +4,5 @@ tiktoken
 .venv
 app.py
 requirements.txt
+app.ipynb
+output.wav
