@@ -92,7 +92,7 @@ async function sendToElevenLabs(responseFromChatGPT) {
       responseType: 'stream'
     });
 
-    console.log(ttsResponse);
+    // console.log(ttsResponse);
 
     // pass along stream to twilio
 
@@ -231,11 +231,6 @@ wss.on("connection", function connection(ws) {
 
         // Terminate AssemblyAI session
         assembly.send(JSON.stringify({ terminate_session: true }));
-
-        // Log the transcribed text
-        // console.log("Transcribed Text after assemblyai terminates:", transcribedText);
-        // Send the transcribed data to ChatGPT
-        sendToChatGPT(transcribedText);
 
         break;
     }        
