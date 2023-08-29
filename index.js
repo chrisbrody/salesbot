@@ -108,6 +108,18 @@ async function sendToElevenLabs(responseFromChatGPT) {
   }
 }
 
+async function initBotResponse() {
+  console.log("Transcribed Text after assemblyai terminates:", transcribedText);
+
+  // Terminate AssemblyAI session
+  assembly.send(JSON.stringify({ terminate_session: true }));
+
+  // Send the transcribed data to ChatGPT
+  sendToChatGPT(transcribedText);
+
+  // send the output.wav file to twillio 
+}
+
 // Handle Web Socket Connection
 wss.on("connection", function connection(ws) {
   console.log("New Connection Initiated");
@@ -167,6 +179,11 @@ wss.on("connection", function connection(ws) {
             }
           });
         };
+
+        // if there has been 3s of time, send the message
+        // Log the transcribed text
+        setTimeout(function() {initBotResponse()}, 5000);
+
         break;
       case "start":
         console.log(`Starting Media Stream ${msg.streamSid}`);
