@@ -1,8 +1,5 @@
 .env
 /node_modules
-tiktoken
-.venv
-app.py
-requirements.txt
-app.ipynb
+python
 output.wav
+temp
