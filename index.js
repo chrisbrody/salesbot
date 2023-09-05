@@ -11,6 +11,10 @@ const axios = require('axios')
 let assembly;
 let chunks = [];
 let transcribedText = "";
+let streamId = "";
+let currentCallSid = "";
+let ws = "";
+const websocketStreamUrl = 'wss://https://3cef-67-241-88-254.ngrok-free.app/audio';
 
 require('dotenv').config(); // Load environment variables from .env file
 
@@ -26,7 +30,7 @@ const fs = require('fs')
 
 // send question to Large language model
 async function sendToChatGPT (transcribedText) {
-  console.log(`data to send to gpt: ${transcribedText}`);
+  console.log(`Transcribed Text: ${transcribedText}`);
 
   const MODEL = 'gpt-3.5-turbo'
   const MAXTOKENS = 4000
@@ -58,14 +62,15 @@ async function sendToChatGPT (transcribedText) {
     console.log('ChatGPT Response:', chatGptResponse);
 
     // feed response to twilio
-    sendToElevenLabs(chatGptResponse)
+    sendToElevenLabs(chatGptResponse, currentCallSid)
   } catch (error) {
     console.error('Error in sendToChatGPT:', error);
   }
 }
 
+
 // Function to send the ChatGPT response to ElevenLabs
-async function sendToElevenLabs(responseFromChatGPT) {
+async function sendToElevenLabs(responseFromChatGPT, currentCallSid) {
   try {
     const XI_API_KEY = process.env.ELEVENLABS_APIKEY;
     const TTS_OUTPUT_PATH = "./output.wav";
@@ -92,15 +97,32 @@ async function sendToElevenLabs(responseFromChatGPT) {
       responseType: 'stream'
     });
 
-    // console.log(ttsResponse);
-
-    // pass along stream to twilio
-
     const outputStream = fs.createWriteStream(TTS_OUTPUT_PATH);
     ttsResponse.data.pipe(outputStream);
 
-    outputStream.on('finish', () => {
-      console.log('ElevenLabs TTS output written successfully.');
+    return new Promise((resolve, reject) => {
+      outputStream.on('finish', async () => {
+        console.log('ElevenLabs TTS output written successfully.');
+
+        // Check if the output.wav file exists
+        if (fs.existsSync(TTS_OUTPUT_PATH)) {
+          try {
+            await sendRawAudio(currentCallSid, websocketStreamUrl); // Use websocketStreamUrl here
+            console.log('Finished sending audio over WebSocket');
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        } else {
+          console.log('output.wav file does not exist.');
+          resolve();
+        }
+      });
+
+      outputStream.on('error', error => {
+        console.error('Error writing TTS output:', error);
+        reject(error);
+      });
     });
 
   } catch (error) {
@@ -109,20 +131,71 @@ async function sendToElevenLabs(responseFromChatGPT) {
 }
 
 async function initBotResponse() {
-  console.log("Transcribed Text after assemblyai terminates:", transcribedText);
-
   // Terminate AssemblyAI session
   assembly.send(JSON.stringify({ terminate_session: true }));
 
   // Send the transcribed data to ChatGPT
-  sendToChatGPT(transcribedText);
+  await sendToChatGPT(transcribedText);
 
-  // send the output.wav file to twillio 
+  console.log('init bot complete');
 }
 
+async function sendRawAudio(callSid, streamUrl) {
+  console.log('send raw audio');
+  console.log(callSid);
+  console.log(streamUrl);
+
+  try {
+    // Load the output.wav file from your root directory
+    const audioFilePath = './output.wav'; // Update with the correct path if needed
+    const audioData = fs.readFileSync(audioFilePath);
+
+    // streaming data coming in frm ELEVENLABS 
+    // convert that to base 64 and add to payload
+    
+    // Base64 encode the audio data
+    const base64AudioData = Buffer.from(audioData).toString("base64");
+
+    // Create a message object with the "media" event and audio payload
+    const message = {
+      event: "media",
+      streamSid: streamId, // Replace with your streamSid
+      media: {
+        payload: base64AudioData
+      }
+    };
+    console.log(message);
+
+    // Send the message as a JSON string to the WebSocket client
+    ws.send(JSON.stringify(message));
+
+    console.log('Finished sending audio to Twilio');
+  } catch (error) {
+    console.error('Error in sendRawAudio:', error);
+  }
+}
+async function sendAudioOverWebSocket(streamUrl) {
+  // Check if the WebSocket connection is established
+  if (!ws) {
+    console.error("WebSocket connection not established.");
+    return;
+  }
+
+  // Send the audio chunks over the WebSocket connection
+  chunks.forEach(chunk => {
+    ws.send(chunk);
+  });
+
+  console.log('Finished sending audio over WebSocket');
+}
+
+
 // Handle Web Socket Connection
-wss.on("connection", function connection(ws) {
+wss.on("connection", function connection(connection) {
   console.log("New Connection Initiated");
+  // Assign the WebSocket instance to the global variable
+  ws = connection;
+  // console.log(client);
 
   ws.on("message", function incoming(message) {
     if (!assembly)
@@ -187,6 +260,8 @@ wss.on("connection", function connection(ws) {
         break;
       case "start":
         console.log(`Starting Media Stream ${msg.streamSid}`);
+        streamId = msg.streamSid
+        currentCallSid  = msg.start.callSid
         break;
       case "media":
         // Extract raw audio data from Twilio's media payload
@@ -220,10 +295,9 @@ wss.on("connection", function connection(ws) {
           const audioBuffer = Buffer.concat(chunks);
           const encodedAudio = audioBuffer.toString("base64");
           assembly.send(JSON.stringify({ audio_data: encodedAudio }));
+          
           chunks = [];
         }
-
-        // some how we need to find when a person stops talking and then call sendToChatGPT function 
 
         break;
       case "stop":
@@ -240,35 +314,41 @@ wss.on("connection", function connection(ws) {
 // Handle GET requests - this will likely be the login
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "/index.html")));
 
+
+let streamUrl = "";
 // Handle POST requests for starting the transcription process
 app.post("/", async (req, res) => {
-  // Initialize a WebSocket connection to AssemblyAI's real-time API
-  assembly = new WebSocket(
-    "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000",
-    { 
-      headers: { 
-        authorization: `${ASSEMBLY_APIKEY}` 
-      } 
-    }
-  );
+  try {
+    streamUrl = `${req.headers.host}/audio`;
 
-  // Set response content type to XML
-  res.set("Content-Type", "text/xml");
+    assembly = new WebSocket(
+      "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=8000",
+      {
+        headers: {
+          authorization: ASSEMBLY_APIKEY
+        }
+      }
+    );
 
-  // Respond with TwiML instructions
-  res.send(
-    `<Response>
-       <Connect>
-         <Stream url='wss://${req.headers.host}' />
-       </Connect>
-       <Say>
-         Start speaking to see your audio transcribed in the console
-       </Say>
-       <Pause length='30' />
-     </Response>`
-  );
+    res.set("Content-Type", "text/xml");
+
+    res.send(
+      `<Response>
+         <Connect>
+           <Stream url='wss://${streamUrl}' />
+         </Connect>
+         <Say>
+           Start speaking to see your audio transcribed in the console
+         </Say>
+         <Pause length='30' />
+       </Response>`
+    );
+  } catch (error) {
+    console.error("Error in POST request:", error);
+    res.status(500).send("Internal Server Error");
+  }
 });
-
 // Start server
-console.log("Listening at Port 8080");
-server.listen(8080);
+server.listen(8080, () => {
+  console.log("Server is listening on port 8080");
+});
