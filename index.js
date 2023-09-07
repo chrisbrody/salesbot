@@ -6,8 +6,14 @@ const WaveFile = require("wavefile").WaveFile;
 const fs = require('fs');
 const path = require("path");
 const twilio = require('twilio');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+const ffmpeg = require('fluent-ffmpeg');
+const { spawn } = require('child_process');
 
 require('dotenv').config();
+
+// Set the FFmpeg path
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const app = express();
 const server = http.createServer(app);
@@ -47,7 +53,6 @@ const ttsHeaders = {
 
 const ttsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${assemblyVoiceId}/stream`;
 
-const appPort = 8080;
 
 // Initialize Twilio client
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -78,20 +83,20 @@ async function sendToChatGPT(transcribedText) {
   }
 }
 
-// Function to send audio data to Twilio
-function sendAudioToTwilio(audioData) {
-  const base64AudioData = Buffer.from(audioData).toString('base64');
+// // Function to send audio data to Twilio
+// function sendAudioToTwilio(audioData) {
+//   const base64AudioData = Buffer.from(audioData).toString('base64');
 
-  const message = {
-    event: 'media',
-    streamSid: streamId,
-    media: {
-      payload: base64AudioData,
-    },
-  };
+//   const message = {
+//     event: 'media',
+//     streamSid: streamId,
+//     media: {
+//       payload: base64AudioData,
+//     },
+//   };
 
-  ws.send(JSON.stringify(message));
-}
+//   ws.send(JSON.stringify(message));
+// }
 
 // Function to send the ChatGPT response to ElevenLabs
 async function sendToElevenLabs(responseFromChatGPT, currentCallSid) {
@@ -105,15 +110,38 @@ async function sendToElevenLabs(responseFromChatGPT, currentCallSid) {
       }
     };
 
-
-
     const ttsResponse = await axios.post(ttsUrl, ttsData, { headers: ttsHeaders, responseType: 'stream' });
 
-    
+    // Set up FFmpeg for transcoding
+    const ffmpeg = spawn(ffmpegInstaller.path, [
+      '-i', 'pipe:0',  // Input from the pipe (streamed data from ElevenLabs)
+      '-f', 'mulaw',   // Set format to mulaw
+      '-ar', '8000',   // Set audio sample rate to 8000
+      '-ac', '1',      // Set audio channels to 1 (mono)
+      'pipe:1'         // Output to pipe
+    ]);
 
-    // Handle data events from the ElevenLabs stream and send it to Twilio
-    ttsResponse.data.on('data', (chunk) => {
-      sendAudioToTwilio(chunk);
+    // Pipe the ElevenLabs stream into FFmpeg
+    ttsResponse.data.pipe(ffmpeg.stdin);
+
+    // Handle the transcoded data from FFmpeg's output
+    ffmpeg.stdout.on('data', (chunk) => {
+      const base64AudioData = Buffer.from(chunk).toString("base64");
+
+      const message = {
+        event: "media",
+        streamSid: streamId,
+        media: {
+          payload: base64AudioData
+        }
+      };
+
+      ws.send(JSON.stringify(message));
+    });
+
+    // Handle FFmpeg errors
+    ffmpeg.stderr.on('data', (data) => {
+      console.error('FFmpeg Error:', data.toString());
     });
 
     // Handle the end of the ElevenLabs stream
