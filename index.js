@@ -1,3 +1,4 @@
+const logger = require('./logger');
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
@@ -83,20 +84,6 @@ async function sendToChatGPT(transcribedText) {
   }
 }
 
-// // Function to send audio data to Twilio
-// function sendAudioToTwilio(audioData) {
-//   const base64AudioData = Buffer.from(audioData).toString('base64');
-
-//   const message = {
-//     event: 'media',
-//     streamSid: streamId,
-//     media: {
-//       payload: base64AudioData,
-//     },
-//   };
-
-//   ws.send(JSON.stringify(message));
-// }
 
 // Function to send the ChatGPT response to ElevenLabs
 async function sendToElevenLabs(responseFromChatGPT, currentCallSid) {
@@ -187,6 +174,9 @@ wss.on("connection", function connection(connection) {
 
     switch (msg.event) {
       case "connected":
+        // Clear the log file when a new call has connected
+        logger.clearLogFile();
+
         console.log(`A new call has connected.`);
         // Handle AssemblyAI's messages and errors
         assembly.onerror = console.error;
