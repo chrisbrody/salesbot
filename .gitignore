@@ -1,5 +1,11 @@
 .env
 /node_modules
-python
 output.wav
 temp
+
+python/.venv
+python/app.py
+python/app.ipynb
+python/output.log
+python/requirements.txt
+python/test.ipynb
